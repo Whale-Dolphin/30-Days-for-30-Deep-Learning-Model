@@ -1,0 +1,39 @@
+# Default configuration template for MLP model
+model:
+  type: "mlp"
+  input_dim: 784  # e.g., 28*28 for MNIST
+  output_dim: 10
+  hidden_dim: 256
+  num_layers: 3
+  activation: "relu"
+  dropout: 0.1
+
+data:
+  type: "tabular"  # or "image" for flattened images
+  data_path: "./data"
+  normalize: true
+  batch_size: 64
+  num_workers: 4
+  shuffle: true
+  pin_memory: true
+
+training:
+  num_epochs: 200
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  optimizer: "adam"
+  scheduler: "plateau"
+  patience: 10
+  factor: 0.1
+  gradient_clip: null
+  save_every: 20
+  eval_every: 1
+
+evaluation:
+  task_type: "classification"  # or "regression"
+
+experiment:
+  name: "mlp_experiment"
+  output_dir: "./outputs"
+  seed: 42
+  device: "auto"
