@@ -1,6 +1,7 @@
 """
 Common utility functions
 """
+from time import time
 
 import torch
 import random
