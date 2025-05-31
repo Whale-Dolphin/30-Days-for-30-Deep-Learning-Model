@@ -22,6 +22,12 @@ from .models import (
 from .training import Trainer
 from .evaluation import Evaluator, MetricTracker
 from .utils import setup_logging, load_config
+from .registry import (
+    MODELS, DATASETS,
+    register_model, register_dataset,
+    create_model, create_dataset,
+    list_models, list_datasets
+)
 
 __all__ = [
     "BaseDataset",
@@ -36,4 +42,12 @@ __all__ = [
     "MetricTracker",
     "setup_logging",
     "load_config",
+    "MODELS",
+    "DATASETS",
+    "register_model",
+    "register_dataset",
+    "create_model",
+    "create_dataset",
+    "list_models",
+    "list_datasets"
 ]

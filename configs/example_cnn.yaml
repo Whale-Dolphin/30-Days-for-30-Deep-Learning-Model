@@ -1,0 +1,41 @@
+# Example CNN configuration
+model:
+  name: "simple_cnn"
+  in_channels: 3
+  num_classes: 10
+  hidden_channels: [32, 64, 128]
+
+data:
+  name: "dummy_image"
+  num_samples: 1000
+  image_size: [3, 32, 32]
+  num_classes: 10
+  train:
+    num_samples: 800
+    image_size: [3, 32, 32]
+    num_classes: 10
+  validation:
+    num_samples: 200
+    image_size: [3, 32, 32]
+    num_classes: 10
+
+training:
+  num_epochs: 10
+  batch_size: 32
+  learning_rate: 0.001
+  weight_decay: 1e-4
+  optimizer: "adam"
+  scheduler: "step"
+  step_size: 5
+  gamma: 0.5
+  loss: "cross_entropy"
+  gradient_clip: 1.0
+  save_interval: 5
+  eval_interval: 1
+  log_interval: 10
+  use_tensorboard: true
+
+experiment:
+  seed: 42
+  output_dir: "./outputs/cnn_experiment"
+  device: "auto"

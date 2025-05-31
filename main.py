@@ -11,10 +11,14 @@ Usage:
     python main.py --config configs/mlp_config.yaml --mode train --resume checkpoint.pt
 """
 
+import dl_arch.data.examples
+import dl_arch.models.examples
 from dl_arch.utils import set_seed, get_device
 from dl_arch import (
-    BaseDataset, DataLoader, BaseModel, Trainer, Evaluator,
-    setup_logging, load_config
+    DataLoader, Trainer, Evaluator,
+    setup_logging, load_config,
+    create_model, create_dataset,
+    list_models, list_datasets
 )
 import argparse
 import os
@@ -23,6 +27,8 @@ from pathlib import Path
 
 # Add the current directory to Python path
 sys.path.append(str(Path(__file__).parent))
+
+# Import all examples to register them
 
 
 def parse_args():
@@ -135,53 +141,105 @@ def main():
     print(f"Output: {output_dir}")
     print("=" * 60)
 
-    # Since we don't have factory functions anymore,
-    # users need to implement their own model and dataset classes
-    print("\nTo use this framework:")
-    print("1. Create your own model class that inherits from BaseModel")
-    print("2. Create your own dataset class that inherits from BaseDataset")
-    print("3. Instantiate them in your training script")
-    print("4. Use the Trainer and Evaluator classes from the framework")
-    print("\nExample usage:")
-    print("""
-from dl_arch import BaseModel, BaseDataset, Trainer, Evaluator
-from dl_arch.models import TransformerEncoderLayer  # Use framework components
+    try:
+        # Extract model and dataset configurations
+        model_config = config.get("model", {})
+        data_config = config.get("data", {})
+        training_config = config.get("training", {})
 
-class MyModel(BaseModel):
-    def __init__(self, config):
-        super().__init__()
-        # Your model implementation
-        
-    def forward(self, x):
-        # Your forward pass
-        return x
-        
-class MyDataset(BaseDataset):
-    def __init__(self, config):
-        super().__init__()
-        # Your dataset implementation
-        
-    def __getitem__(self, idx):
-        # Return your data
-        pass
+        model_name = model_config.get("name")
+        dataset_name = data_config.get("name")
 
-# In your training script:
-model = MyModel(config)
-dataset = MyDataset(config)
-dataloader = DataLoader(dataset, config)
-trainer = Trainer(model, dataloader, config)
-trainer.train()
-""")
+        if not model_name:
+            logger.error("Model name not specified in config")
+            print(f"Available models: {list_models()}")
+            sys.exit(1)
 
-    print("\nFramework provides these ready-to-use components:")
-    print("- BaseModel: Abstract base class for models")
-    print("- BaseDataset: Abstract base class for datasets")
-    print("- Trainer: Universal training loop")
-    print("- Evaluator: Comprehensive evaluation metrics")
-    print("- Transformer components: PositionalEncoding, MultiHeadAttention, etc.")
-    print("- Utilities: Logging, checkpointing, configuration management")
+        if not dataset_name:
+            logger.error("Dataset name not specified in config")
+            print(f"Available datasets: {list_datasets()}")
+            sys.exit(1)
 
-    logger.info("Framework overview completed")
+        print(f"Creating model: {model_name}")
+        print(f"Creating dataset: {dataset_name}")
+
+        # Create model and datasets
+        model = create_model(model_name, model_config)
+        train_dataset = create_dataset(
+            dataset_name, data_config.get("train", data_config))
+
+        # Create validation dataset if specified
+        val_dataset = None
+        if "validation" in data_config:
+            val_dataset = create_dataset(
+                dataset_name, data_config["validation"])
+
+        # Create data loaders
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=training_config.get("batch_size", 32),
+            shuffle=training_config.get("shuffle", True),
+            num_workers=training_config.get("num_workers", 0)
+        )
+
+        val_loader = None
+        if val_dataset:
+            val_loader = DataLoader(
+                val_dataset,
+                batch_size=training_config.get("batch_size", 32),
+                shuffle=False,
+                num_workers=training_config.get("num_workers", 0)
+            )
+
+        # Update training config with experiment settings
+        training_config.update(experiment_config)
+
+        print(f"Model: {model.__class__.__name__}")
+        print(f"Training samples: {len(train_dataset)}")
+        if val_dataset:
+            print(f"Validation samples: {len(val_dataset)}")
+
+        # Training mode
+        if args.mode in ["train", "both"]:
+            print("\nStarting training...")
+            trainer = Trainer(
+                model=model,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                config=training_config
+            )
+
+            if args.resume:
+                print(f"Resuming from checkpoint: {args.resume}")
+                trainer.resume_training(args.resume)
+            else:
+                trainer.train()
+
+        # Evaluation mode
+        if args.mode in ["eval", "both"]:
+            print("\nStarting evaluation...")
+            eval_loader = val_loader if val_loader else train_loader
+            evaluator = Evaluator(model, eval_loader, training_config)
+
+            if args.resume:
+                print(f"Loading checkpoint for evaluation: {args.resume}")
+                trainer = Trainer(model, train_loader,
+                                  val_loader, training_config)
+                trainer.load_checkpoint(args.resume)
+
+            metrics = evaluator.evaluate()
+            print("\nEvaluation Results:")
+            for metric, value in metrics.items():
+                print(f"  {metric}: {value:.4f}")
+
+    except Exception as e:
+        logger.error(f"Error during execution: {e}")
+        print(f"Error: {e}")
+        print(f"\nAvailable models: {list_models()}")
+        print(f"Available datasets: {list_datasets()}")
+        sys.exit(1)
+
+    logger.info("Experiment completed successfully")
 
 
 if __name__ == "__main__":
