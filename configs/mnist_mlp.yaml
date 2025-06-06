@@ -1,0 +1,50 @@
+# MNIST dataset with MLP model configuration
+model:
+  name: "simple_mlp"
+  input_size: 784  # 28*28 flattened MNIST images
+  hidden_sizes: [512, 256, 128]
+  output_size: 10  # 10 digit classes
+  dropout: 0.2
+
+data:
+  name: "mnist"
+  data_path: "./data"
+  download: true
+  flatten: true  # Flatten images for MLP
+  normalize: true
+  preprocessor:
+    name: "mnist"
+    flatten: true  # Enable flattening for MLP compatibility
+    normalize: true
+  train:
+    split: "train"
+    flatten: true
+  validation:
+    split: "test"  # Using test set as validation for simplicity
+    flatten: true
+
+dataloader:
+  batch_size: 64
+  num_workers: 0
+  pin_memory: true
+
+training:
+  num_epochs: 10
+  batch_size: 64
+  learning_rate: 0.001
+  weight_decay: 1e-4
+  optimizer: "adam"
+  scheduler: "plateau"
+  factor: 0.5
+  patience: 3
+  loss: "cross_entropy"
+  gradient_clip: 1.0
+  save_interval: 5
+  eval_interval: 1
+  log_interval: 100
+  use_tensorboard: true
+
+experiment:
+  seed: 42
+  output_dir: "./outputs/mnist_mlp_experiment"
+  device: "auto" 

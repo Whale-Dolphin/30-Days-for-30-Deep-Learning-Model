@@ -13,7 +13,7 @@ Usage:
 
 import dl_arch.data.examples
 import dl_arch.models.examples
-from dl_arch.utils import set_seed, get_device
+from dl_arch.utils import set_seed
 from dl_arch import (
     DataLoader, Trainer, Evaluator,
     setup_logging, load_config,
