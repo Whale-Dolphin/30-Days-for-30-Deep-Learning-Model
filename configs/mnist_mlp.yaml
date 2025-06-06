@@ -46,5 +46,5 @@ training:
 
 experiment:
   seed: 42
-  output_dir: "./outputs/mnist_mlp_experiment"
+  output_dir: "./exp/mnist_mlp_experiment"
   device: "auto" 

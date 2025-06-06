@@ -2,10 +2,11 @@
 Example datasets demonstrating the registry system.
 """
 
+from typing import Dict, Any
+
 import torch
 from torch.utils.data import IterableDataset
-import numpy as np
-from typing import Dict, Any, Tuple
+
 from dl_arch.data import BaseDataset
 from dl_arch import register_dataset
 

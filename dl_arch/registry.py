@@ -3,7 +3,7 @@ Registry system for models and datasets with decorators.
 """
 
 from typing import Dict, Type, Any, Union
-import inspect
+
 from .models import BaseModel
 from .data import BaseDataset
 
@@ -139,13 +139,32 @@ class ModelRegistry(Registry):
         return decorator
 
 
+class PreprocessRegistry(Registry):
+    """Registry specifically for preprocessing functions."""
+
+    def __init__(self):
+        super().__init__("Preprocess")
+
+    def register(self, name: str = None):
+        """Decorator for registering preprocessing functions."""
+        def decorator(func):
+            # Use function name if no name provided
+            reg_name = name if name is not None else func.__name__.lower()
+
+            if reg_name in self._registry:
+                raise ValueError(f"Preprocess '{reg_name}' already registered")
+
+            self._registry[reg_name] = func
+            return func
+        return decorator
+
+
 # Global registries
 MODELS = ModelRegistry()
 DATASETS = DatasetRegistry()
+PREPROCESSES = PreprocessRegistry()  # New global registry for preprocessing
 
 # Convenience decorators
-
-
 def register_model(name: str = None):
     """Decorator to register a model."""
     return MODELS.register(name)
@@ -155,9 +174,13 @@ def register_dataset(name: str = None, dataset_type: str = "map"):
     """Decorator to register a dataset."""
     return DATASETS.register(name, dataset_type)
 
+
+def register_preprocess(name: str = None):
+    """Decorator to register a preprocessing function."""
+    return PREPROCESSES.register(name)
+
+
 # Factory functions
-
-
 def create_model(name: str, config: Dict[str, Any]) -> BaseModel:
     """Create a model instance from registry."""
     return MODELS.create(name, config)

@@ -2,10 +2,11 @@
 Transformer components and layers
 """
 
-import torch
-import torch.nn as nn
 import math
 from typing import Optional
+
+import torch
+import torch.nn as nn
 
 
 class PositionalEncoding(nn.Module):

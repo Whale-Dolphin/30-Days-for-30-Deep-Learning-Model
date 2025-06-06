@@ -2,10 +2,11 @@
 Base model class
 """
 
-import torch
-import torch.nn as nn
 from abc import ABC, abstractmethod
 from typing import Any, Dict
+
+import torch
+import torch.nn as nn
 
 
 class BaseModel(nn.Module, ABC):

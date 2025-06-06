@@ -2,10 +2,12 @@
 Example models demonstrating the registry system.
 """
 
+from typing import Dict, Any
+
 import torch
 import torch.nn as nn
-from typing import Dict, Any, Optional
 from loguru import logger
+
 from dl_arch.models import BaseModel
 from dl_arch.models.transformer import TransformerEncoderLayer
 from dl_arch import register_model

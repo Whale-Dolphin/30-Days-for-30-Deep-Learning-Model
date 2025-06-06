@@ -2,12 +2,15 @@
 Data preprocessing system with registry support.
 """
 
+from abc import ABC, abstractmethod
+from typing import Any, Dict, Union, Tuple, Optional
+
 import torch
 import torchvision.transforms as transforms
 import numpy as np
-from abc import ABC, abstractmethod
-from typing import Any, Dict, Union, Tuple, Optional
 from loguru import logger
+
+from dl_arch.registry import register_preprocess
 
 
 class BasePreprocessor(ABC):
@@ -61,54 +64,6 @@ class BasePreprocessor(ABC):
             Postprocessed data
         """
         return data
-
-
-class PreprocessorRegistry:
-    """Registry for data preprocessors."""
-
-    def __init__(self):
-        self._registry: Dict[str, type] = {}
-
-    def register(self, name: str):
-        """Decorator for registering preprocessors."""
-        def decorator(cls):
-            if not issubclass(cls, BasePreprocessor):
-                raise ValueError(
-                    f"Class {cls.__name__} must inherit from BasePreprocessor")
-
-            if name in self._registry:
-                raise ValueError(f"Preprocessor '{name}' already registered")
-
-            self._registry[name] = cls
-            logger.debug("Registered preprocessor: {}", name)
-            return cls
-        return decorator
-
-    def get(self, name: str) -> type:
-        """Get preprocessor class by name."""
-        if name not in self._registry:
-            available = list(self._registry.keys())
-            raise ValueError(
-                f"Preprocessor '{name}' not found. Available: {available}")
-        return self._registry[name]
-
-    def create(self, name: str, config: Dict[str, Any]) -> BasePreprocessor:
-        """Create preprocessor instance."""
-        cls = self.get(name)
-        return cls(config)
-
-    def list_available(self) -> list:
-        """List all available preprocessors."""
-        return list(self._registry.keys())
-
-
-# Global preprocessor registry
-PREPROCESSORS = PreprocessorRegistry()
-
-
-def register_preprocessor(name: str):
-    """Decorator to register a preprocessor."""
-    return PREPROCESSORS.register(name)
 
 
 @register_preprocessor("image")
@@ -165,7 +120,7 @@ class ImagePreprocessor(BasePreprocessor):
         Returns:
             Preprocessed image tensor with shape (C, H, W)
         """
-        logger.debug("Image preprocessing - input type: {}", type(data))
+        # logger.debug("Image preprocessing - input type: {}", type(data))
 
         if isinstance(data, torch.Tensor):
             # Ensure correct shape and dtype
@@ -178,7 +133,7 @@ class ImagePreprocessor(BasePreprocessor):
             if self.normalize and data.max() > 1.0:
                 data = data / 255.0
 
-            logger.debug("Image preprocessing - output shape: {}", data.shape)
+            # logger.debug("Image preprocessing - output shape: {}", data.shape)
             return data
 
         elif isinstance(data, np.ndarray):
@@ -194,14 +149,14 @@ class ImagePreprocessor(BasePreprocessor):
             if data.max() > 1.0:
                 data = data / 255.0
 
-            logger.debug("Image preprocessing - output shape: {}", data.shape)
+            # logger.debug("Image preprocessing - output shape: {}", data.shape)
             return data
 
         else:
             # Use torchvision transforms for PIL images
             processed = self.transform(data)
-            logger.debug("Image preprocessing - output shape: {}",
-                         processed.shape)
+            # logger.debug("Image preprocessing - output shape: {}",
+            #              processed.shape)
             return processed
 
     def get_output_shape(self) -> Tuple[int, ...]:
@@ -232,7 +187,7 @@ class TextPreprocessor(BasePreprocessor):
         Returns:
             Preprocessed text tensor or dictionary with input_ids and attention_mask
         """
-        logger.debug("Text preprocessing - input type: {}", type(data))
+        # logger.debug("Text preprocessing - input type: {}", type(data))
 
         if isinstance(data, dict):
             # Handle dictionary format (e.g., from tokenizers)
@@ -251,8 +206,8 @@ class TextPreprocessor(BasePreprocessor):
 
                 processed[key] = tensor
 
-            logger.debug("Text preprocessing - output keys: {}",
-                         list(processed.keys()))
+            # logger.debug("Text preprocessing - output keys: {}",
+            #              list(processed.keys()))
             return processed
 
         elif isinstance(data, (list, np.ndarray)):
@@ -261,7 +216,7 @@ class TextPreprocessor(BasePreprocessor):
             if tensor.dim() == 1:
                 tensor = self._pad_truncate(tensor, is_mask=False)
 
-            logger.debug("Text preprocessing - output shape: {}", tensor.shape)
+            # logger.debug("Text preprocessing - output shape: {}", tensor.shape)
             return tensor
 
         elif isinstance(data, torch.Tensor):
@@ -270,7 +225,7 @@ class TextPreprocessor(BasePreprocessor):
             if tensor.dim() == 1:
                 tensor = self._pad_truncate(tensor, is_mask=False)
 
-            logger.debug("Text preprocessing - output shape: {}", tensor.shape)
+            # logger.debug("Text preprocessing - output shape: {}", tensor.shape)
             return tensor
 
         else:
@@ -320,7 +275,7 @@ class TabularPreprocessor(BasePreprocessor):
         Returns:
             Preprocessed tabular tensor with shape (num_features,)
         """
-        logger.debug("Tabular preprocessing - input type: {}", type(data))
+        # logger.debug("Tabular preprocessing - input type: {}", type(data))
 
         if isinstance(data, torch.Tensor):
             tensor = data.float()
@@ -341,7 +296,7 @@ class TabularPreprocessor(BasePreprocessor):
             std = torch.tensor(self.feature_std, dtype=tensor.dtype)
             tensor = (tensor - mean) / (std + 1e-8)
 
-        logger.debug("Tabular preprocessing - output shape: {}", tensor.shape)
+        # logger.debug("Tabular preprocessing - output shape: {}", tensor.shape)
         return tensor
 
     def get_output_shape(self) -> Tuple[int, ...]:
@@ -373,7 +328,7 @@ class AudioPreprocessor(BasePreprocessor):
         Returns:
             Preprocessed audio tensor
         """
-        logger.debug("Audio preprocessing - input type: {}", type(data))
+        # logger.debug("Audio preprocessing - input type: {}", type(data))
 
         if isinstance(data, torch.Tensor):
             tensor = data.float()
@@ -392,7 +347,7 @@ class AudioPreprocessor(BasePreprocessor):
         if self.max_length and tensor.size(-1) > self.max_length:
             tensor = tensor[..., :self.max_length]
 
-        logger.debug("Audio preprocessing - output shape: {}", tensor.shape)
+        # logger.debug("Audio preprocessing - output shape: {}", tensor.shape)
         return tensor
 
     def get_output_shape(self) -> Tuple[int, ...]:
@@ -424,7 +379,7 @@ class MNISTPreprocessor(BasePreprocessor):
         Returns:
             Preprocessed MNIST tensor
         """
-        logger.debug("MNIST preprocessing - input type: {}", type(data))
+        # logger.debug("MNIST preprocessing - input type: {}", type(data))
 
         if isinstance(data, torch.Tensor):
             tensor = data.float()
@@ -458,7 +413,7 @@ class MNISTPreprocessor(BasePreprocessor):
         if self.flatten:
             tensor = tensor.view(-1)  # 784 features
 
-        logger.debug("MNIST preprocessing - output shape: {}", tensor.shape)
+        # logger.debug("MNIST preprocessing - output shape: {}", tensor.shape)
         return tensor
 
     def get_output_shape(self) -> Tuple[int, ...]:

@@ -2,13 +2,14 @@
 Training utilities and trainer class
 """
 
+import os
+import time
+from typing import Any, Dict, Optional
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
-from typing import Any, Dict, Optional, Callable
-import os
-import time
 from tqdm import tqdm
 from loguru import logger
 
@@ -70,11 +71,16 @@ class Trainer:
         self.output_dir = self.config.get("output_dir", "./output")
         os.makedirs(self.output_dir, exist_ok=True)
 
+        # TensorBoard setup - can be overridden from main.py
+        self.tensorboard_writer = None
         self.use_tensorboard = self.config.get("use_tensorboard", True)
-        if self.use_tensorboard:
-            self.writer = SummaryWriter(
+        if self.use_tensorboard and not hasattr(self, 'tensorboard_writer'):
+            self.tensorboard_writer = SummaryWriter(
                 log_dir=os.path.join(self.output_dir, "tensorboard")
             )
+
+        # Evaluator for periodic evaluation - can be set from main.py
+        self.evaluator = None
 
         # Set up logging
         logger.add(os.path.join(self.output_dir,
@@ -201,26 +207,9 @@ class Trainer:
             attention_mask = batch.get("attention_mask", None)
             if attention_mask is not None:
                 attention_mask = attention_mask.to(self.device)
-                logger.debug("Attention mask shape: {}", attention_mask.shape)
-
-            # Forward pass
-            if training:
-                self.optimizer.zero_grad()
-
-            if attention_mask is not None:
                 outputs = self.model(inputs, mask=attention_mask)
             else:
                 outputs = self.model(inputs)
-
-            loss = self.criterion(outputs, targets)
-
-            if training:
-                loss.backward()
-                if self.gradient_clip is not None:
-                    torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(), self.gradient_clip
-                    )
-                self.optimizer.step()
 
         elif isinstance(batch, (tuple, list)) and len(batch) == 2:
             # Handle tuple format (inputs, targets)
@@ -233,169 +222,334 @@ class Trainer:
                 "Tuple batch - inputs shape: {}, targets shape: {}", inputs.shape, targets.shape)
 
             # Forward pass
-            if training:
-                self.optimizer.zero_grad()
-
             outputs = self.model(inputs)
-            loss = self.criterion(outputs, targets)
-
-            if training:
-                loss.backward()
-                if self.gradient_clip is not None:
-                    torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(), self.gradient_clip
-                    )
-                self.optimizer.step()
 
         else:
             raise ValueError(f"Unsupported batch format: {type(batch)}")
 
+        # Calculate loss
+        loss = self.criterion(outputs, targets)
+        logger.debug("Loss computed: {:.4f}", loss.item())
+
+        # Backward pass and optimization (only if training)
+        if training:
+            self.optimizer.zero_grad()
+            loss.backward()
+
+            # Gradient clipping if specified
+            if self.gradient_clip is not None:
+                torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(), self.gradient_clip)
+                logger.debug("Gradients clipped to: {}", self.gradient_clip)
+
+            self.optimizer.step()
+            self.global_step += 1
+
         return inputs, targets, loss
 
     def train_epoch(self) -> Dict[str, float]:
-        """Train for one epoch."""
+        """
+        Input: None (uses self.train_loader)
+        Output: metrics (Dict[str, float]) - Training metrics for the epoch including:
+               - train_loss: Average loss across all batches
+               - train_accuracy: Average accuracy (for classification tasks)
+               - learning_rate: Current learning rate
+
+        Purpose: Execute one complete training epoch, processing all batches in train_loader.
+                Computes and tracks training metrics, logs progress with tqdm.
+
+        Mathematical operations:
+            For each batch: loss_i = criterion(model(x_i), y_i)
+            Average loss: L = (1/N) * Σ(loss_i) where N = number of batches
+            Accuracy: acc = (1/N) * Σ(correct_predictions_i / batch_size_i)
+
+        Tensor operations:
+            Iterates through train_loader: [(B, D), (B,)] where B=batch_size, D=input_dim
+            -> forward pass -> [(B, C)] where C=num_classes
+            -> loss computation -> scalar per batch
+            -> aggregation -> epoch metrics
+        """
+        logger.info("Starting training epoch {}", self.current_epoch + 1)
+
         self.model.train()
         total_loss = 0.0
         num_batches = 0
+        correct_predictions = 0
+        total_predictions = 0
 
         progress_bar = tqdm(
             self.train_loader,
-            desc=f"Epoch {self.current_epoch + 1}/{self.num_epochs}"
+            desc=f"Epoch {self.current_epoch + 1}/{self.num_epochs}",
+            leave=False
         )
 
         for batch_idx, batch in enumerate(progress_bar):
-            # Handle different batch formats
             inputs, targets, loss = self._process_batch(batch, training=True)
 
-            # Update metrics
+            # Calculate accuracy for classification tasks
+            if len(targets.shape) == 1 or (len(targets.shape) == 2 and targets.shape[1] == 1):
+                # Classification task
+                outputs = self.model(inputs)
+                if outputs.dim() == 2 and outputs.size(1) > 1:  # Multi-class
+                    predictions = torch.argmax(outputs, dim=1)
+                    correct = (predictions == targets).sum().item()
+                else:  # Binary classification
+                    predictions = (torch.sigmoid(outputs)
+                                   > 0.5).long().squeeze()
+                    correct = (predictions == targets).sum().item()
+
+                correct_predictions += correct
+                total_predictions += targets.size(0)
+
             total_loss += loss.item()
             num_batches += 1
-            self.global_step += 1
 
-            # Logging
-            if batch_idx % self.log_interval == 0:
-                current_lr = self.optimizer.param_groups[0]['lr']
-                progress_bar.set_postfix({
-                    'loss': f'{loss.item():.4f}',
-                    'avg_loss': f'{total_loss / num_batches:.4f}',
-                    'lr': f'{current_lr:.6f}'
-                })
+            # Update progress bar
+            current_avg_loss = total_loss / num_batches
+            progress_bar.set_postfix({
+                'loss': f'{current_avg_loss:.4f}',
+                'lr': f'{self.optimizer.param_groups[0]["lr"]:.2e}'
+            })
 
-                if self.use_tensorboard:
-                    self.writer.add_scalar(
-                        'Train/Loss', loss.item(), self.global_step)
-                    self.writer.add_scalar(
-                        'Train/LR', current_lr, self.global_step)
+            # Log to TensorBoard
+            if self.tensorboard_writer and batch_idx % self.log_interval == 0:
+                self.tensorboard_writer.add_scalar(
+                    'train/batch_loss', loss.item(), self.global_step)
+                self.tensorboard_writer.add_scalar(
+                    'train/learning_rate', self.optimizer.param_groups[0]['lr'], self.global_step)
 
-                    # Log gradient norms for debugging
-                    total_norm = 0
-                    for p in self.model.parameters():
-                        if p.grad is not None:
-                            param_norm = p.grad.detach().data.norm(2)
-                            total_norm += param_norm.item() ** 2
-                    total_norm = total_norm ** (1. / 2)
-                    self.writer.add_scalar(
-                        'Train/GradNorm', total_norm, self.global_step)
+                # Log batch accuracy if available
+                if total_predictions > 0:
+                    current_accuracy = correct_predictions / total_predictions
+                    self.tensorboard_writer.add_scalar(
+                        'train/batch_accuracy', current_accuracy, self.global_step)
 
-                    # Log parameter histograms occasionally
-                    if batch_idx % (self.log_interval * 10) == 0:
-                        for name, param in self.model.named_parameters():
-                            self.writer.add_histogram(
-                                f'Parameters/{name}', param, self.global_step)
-
+        # Calculate epoch metrics
         avg_loss = total_loss / num_batches
-        return {"loss": avg_loss}
+        metrics = {
+            "train_loss": avg_loss,
+            "learning_rate": self.optimizer.param_groups[0]['lr']
+        }
+
+        # Add accuracy if classification task
+        if total_predictions > 0:
+            accuracy = correct_predictions / total_predictions
+            metrics["train_accuracy"] = accuracy
+
+        # Log epoch metrics to TensorBoard
+        if self.tensorboard_writer:
+            for key, value in metrics.items():
+                self.tensorboard_writer.add_scalar(
+                    f'epoch/{key}', value, self.current_epoch)
+
+            # Log gradient norms for debugging
+            total_norm = 0
+            for p in self.model.parameters():
+                if p.grad is not None:
+                    param_norm = p.grad.detach().data.norm(2)
+                    total_norm += param_norm.item() ** 2
+            total_norm = total_norm ** (1. / 2)
+            self.tensorboard_writer.add_scalar(
+                'train/gradient_norm', total_norm, self.current_epoch)
+
+            # Log parameter histograms occasionally
+            if (self.current_epoch + 1) % 5 == 0:
+                for name, param in self.model.named_parameters():
+                    self.tensorboard_writer.add_histogram(
+                        f'parameters/{name}', param, self.current_epoch)
+
+        logger.info("Training epoch {} completed. Metrics: {}",
+                    self.current_epoch + 1,
+                    {k: f"{v:.4f}" for k, v in metrics.items()})
+
+        return metrics
 
     def validate(self) -> Dict[str, float]:
-        """Validate the model."""
+        """
+        Input: None (uses self.val_loader if available)
+        Output: metrics (Dict[str, float]) - Validation metrics including:
+               - val_loss: Average validation loss
+               - val_accuracy: Average validation accuracy (for classification)
+
+        Purpose: Execute validation pass over validation set without gradient updates.
+                Used for monitoring training progress and early stopping.
+
+        Mathematical operations:
+            For each batch: loss_i = criterion(model(x_i), y_i) [no gradients]
+            Average loss: L_val = (1/N) * Σ(loss_i)
+            Accuracy: acc_val = (1/N) * Σ(correct_predictions_i / batch_size_i)
+
+        Tensor operations:
+            Same as train_epoch but with torch.no_grad() context
+            and self.model.eval() mode (disables dropout, batch norm updates)
+        """
         if self.val_loader is None:
             return {}
+
+        logger.debug("Starting validation")
 
         self.model.eval()
         total_loss = 0.0
         num_batches = 0
+        correct_predictions = 0
+        total_predictions = 0
 
         with torch.no_grad():
-            for batch in tqdm(self.val_loader, desc="Validation"):
-                # Handle different batch formats
+            for batch in tqdm(self.val_loader, desc="Validation", leave=False):
                 inputs, targets, loss = self._process_batch(
                     batch, training=False)
+
+                # Calculate accuracy for classification tasks
+                if len(targets.shape) == 1 or (len(targets.shape) == 2 and targets.shape[1] == 1):
+                    # Classification task
+                    outputs = self.model(inputs)
+                    if outputs.dim() == 2 and outputs.size(1) > 1:  # Multi-class
+                        predictions = torch.argmax(outputs, dim=1)
+                        correct = (predictions == targets).sum().item()
+                    else:  # Binary classification
+                        predictions = (torch.sigmoid(
+                            outputs) > 0.5).long().squeeze()
+                        correct = (predictions == targets).sum().item()
+
+                    correct_predictions += correct
+                    total_predictions += targets.size(0)
 
                 total_loss += loss.item()
                 num_batches += 1
 
+        # Calculate validation metrics
         avg_loss = total_loss / num_batches
-        return {"loss": avg_loss}
+        metrics = {"val_loss": avg_loss}
+
+        # Add accuracy if classification task
+        if total_predictions > 0:
+            accuracy = correct_predictions / total_predictions
+            metrics["val_accuracy"] = accuracy
+
+        # Log validation metrics to TensorBoard
+        if self.tensorboard_writer:
+            for key, value in metrics.items():
+                self.tensorboard_writer.add_scalar(
+                    f'epoch/{key}', value, self.current_epoch)
+
+        logger.debug("Validation completed. Metrics: {}",
+                     {k: f"{v:.4f}" for k, v in metrics.items()})
+
+        return metrics
+
+    def _run_evaluation(self) -> Dict[str, float]:
+        """
+        Run evaluation using the evaluator if available.
+
+        Returns:
+            Dictionary containing evaluation metrics
+        """
+        if self.evaluator is None:
+            return {}
+
+        logger.info("Running evaluation at epoch {}", self.current_epoch + 1)
+
+        try:
+            eval_metrics = self.evaluator.evaluate(
+                epoch=self.current_epoch,
+                prefix="eval"
+            )
+            logger.info("Evaluation completed. Metrics: {}",
+                        {k: f"{v:.4f}" for k, v in eval_metrics.items() if isinstance(v, (int, float))})
+            return eval_metrics
+        except Exception as e:
+            logger.error("Error during evaluation: {}", e)
+            return {}
 
     def train(self) -> None:
-        """Main training loop."""
-        logger.info("Starting training...")
-        logger.info("Device: {}", self.device)
-        logger.info("Model: {}", self.model.__class__.__name__)
-        logger.info("Training samples: {}", len(self.train_loader.dataset))
-        if self.val_loader:
-            logger.info("Validation samples: {}", len(self.val_loader.dataset))
+        """
+        Input: None (uses instance variables and loaders)
+        Output: None (saves checkpoints and logs to file/TensorBoard)
+
+        Purpose: Execute complete training loop across all epochs.
+                Handles training/validation cycles, checkpointing, learning rate scheduling,
+                early stopping, and progress monitoring.
+
+        Training flow:
+            For each epoch:
+                1. Execute training pass (self.train_epoch())
+                2. Execute validation pass (self.validate()) 
+                3. Update learning rate scheduler
+                4. Run evaluation if evaluator is available
+                5. Save checkpoint if best model or at save interval
+                6. Check early stopping conditions
+        """
+        logger.info("Starting training for {} epochs", self.num_epochs)
 
         start_time = time.time()
 
-        for epoch in range(self.num_epochs):
+        for epoch in range(self.current_epoch, self.num_epochs):
             self.current_epoch = epoch
+            epoch_start_time = time.time()
 
-            # Training
+            # Training phase
             train_metrics = self.train_epoch()
 
-            # Validation
-            val_metrics = {}
-            if epoch % self.eval_interval == 0:
-                val_metrics = self.validate()
+            # Validation phase
+            val_metrics = validate_metrics = self.validate()
 
-            # Learning rate scheduling
+            # Combine metrics
+            all_metrics = {**train_metrics, **val_metrics}
+
+            # Learning rate scheduler step
             if self.scheduler is not None:
                 if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-                    if val_metrics and "loss" in val_metrics:
-                        self.scheduler.step(val_metrics["loss"])
+                    # Use validation loss for plateau scheduler
+                    metric_value = val_metrics.get(
+                        "val_loss", train_metrics.get("train_loss", 0))
+                    self.scheduler.step(metric_value)
                 else:
                     self.scheduler.step()
 
-            # Logging
-            log_msg = f"Epoch {epoch + 1}/{self.num_epochs} - "
-            log_msg += f"Train Loss: {train_metrics['loss']:.4f}"
-            if val_metrics:
-                log_msg += f" - Val Loss: {val_metrics['loss']:.4f}"
+            # Run evaluation if evaluator is available and it's time for evaluation
+            if self.evaluator is not None and (epoch + 1) % self.eval_interval == 0:
+                eval_metrics = self._run_evaluation()
+                all_metrics.update(eval_metrics)
 
-            logger.info(log_msg)
-
-            # TensorBoard logging
-            if self.use_tensorboard:
-                self.writer.add_scalar(
-                    'Epoch/Train_Loss', train_metrics['loss'], epoch)
-                if val_metrics:
-                    self.writer.add_scalar(
-                        'Epoch/Val_Loss', val_metrics['loss'], epoch)
+            # Check if this is the best model
+            current_metric = val_metrics.get(
+                "val_loss", train_metrics.get("train_loss", float('inf')))
+            is_best = current_metric < self.best_metric
+            if is_best:
+                self.best_metric = current_metric
 
             # Save checkpoint
-            if (epoch + 1) % self.save_interval == 0:
-                self.save_checkpoint(epoch + 1)
+            if (epoch + 1) % self.save_interval == 0 or is_best:
+                self.save_checkpoint(epoch, is_best)
 
-            # Save best model
-            if val_metrics and val_metrics['loss'] < self.best_metric:
-                self.best_metric = val_metrics['loss']
-                self.save_checkpoint(epoch + 1, is_best=True)
+            # Log epoch summary
+            epoch_time = time.time() - epoch_start_time
+            logger.info("Epoch {}/{} completed in {:.2f}s. Metrics: {}",
+                        epoch + 1, self.num_epochs, epoch_time,
+                        {k: f"{v:.4f}" for k, v in all_metrics.items() if isinstance(v, (int, float))})
 
-        training_time = time.time() - start_time
-        logger.info("Training completed in {:.2f} seconds", training_time)
+        total_time = time.time() - start_time
+        logger.info("Training completed in {:.2f}s. Best metric: {:.4f}",
+                    total_time, self.best_metric)
 
-        if self.use_tensorboard:
-            self.writer.close()
+        # Close TensorBoard writer if we created it
+        if self.tensorboard_writer and self.use_tensorboard:
+            self.tensorboard_writer.close()
 
     def save_checkpoint(self, epoch: int, is_best: bool = False) -> None:
-        """Save model checkpoint."""
+        """
+        Save model checkpoint.
+
+        Args:
+            epoch: Current epoch
+            is_best: Whether this is the best model so far
+        """
         checkpoint = {
             'epoch': epoch,
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'config': self.config,
-            'best_metric': self.best_metric
+            'best_metric': self.best_metric,
+            'config': self.config
         }
 
         if self.scheduler is not None:
@@ -403,38 +557,42 @@ class Trainer:
 
         # Save regular checkpoint
         checkpoint_path = os.path.join(
-            self.output_dir, f"checkpoint_epoch_{epoch}.pth")
-        save_checkpoint(checkpoint, checkpoint_path)
+            self.output_dir, f"checkpoint_epoch_{epoch + 1}.pt")
+        torch.save(checkpoint, checkpoint_path)
+        logger.info("Checkpoint saved: {}", checkpoint_path)
 
-        # Save best checkpoint
+        # Save best model
         if is_best:
-            best_path = os.path.join(self.output_dir, "best_model.pth")
-            save_checkpoint(checkpoint, best_path)
-            logger.info("Saved best model at epoch {}", epoch)
+            best_path = os.path.join(self.output_dir, "best_model.pt")
+            torch.save(checkpoint, best_path)
+            logger.info("Best model saved: {}", best_path)
 
     def load_checkpoint(self, checkpoint_path: str) -> None:
-        """Load model checkpoint."""
-        checkpoint = load_checkpoint(checkpoint_path, self.device)
+        """
+        Load model checkpoint.
+
+        Args:
+            checkpoint_path: Path to checkpoint file
+        """
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
 
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        self.current_epoch = checkpoint['epoch']
+        self.best_metric = checkpoint.get('best_metric', float('inf'))
 
         if self.scheduler is not None and 'scheduler_state_dict' in checkpoint:
             self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
-        self.current_epoch = checkpoint['epoch']
-        self.best_metric = checkpoint.get('best_metric', float('inf'))
-
-        logger.info("Loaded checkpoint from epoch {}", self.current_epoch)
+        logger.info("Checkpoint loaded from: {}", checkpoint_path)
 
     def resume_training(self, checkpoint_path: str) -> None:
-        """Resume training from checkpoint."""
-        self.load_checkpoint(checkpoint_path)
+        """
+        Resume training from checkpoint.
 
-        # Continue training from the next epoch
-        remaining_epochs = self.num_epochs - self.current_epoch
-        if remaining_epochs > 0:
-            self.num_epochs = remaining_epochs
-            self.train()
-        else:
-            logger.info("Training already completed")
+        Args:
+            checkpoint_path: Path to checkpoint file
+        """
+        self.load_checkpoint(checkpoint_path)
+        logger.info("Resuming training from epoch {}", self.current_epoch + 1)
+        self.train()
