@@ -69,16 +69,49 @@ class Evaluator:
 
         with torch.no_grad():
             for batch in tqdm(self.test_loader, desc="Evaluating"):
-                # Move batch to device
-                batch = self.model.prepare_batch(batch, self.device)
-                
-                # Forward pass
-                outputs = self.model(batch["input"])
-                loss = criterion(outputs, batch["target"])
+                # Process batch based on format
+                if isinstance(batch, dict):
+                    # Handle dictionary format (e.g., transformer data)
+                    inputs = batch.get("input_ids", batch.get("input", None))
+                    targets = batch.get("labels", batch.get("target", None))
+
+                    if inputs is None or targets is None:
+                        raise ValueError(
+                            "Dict batch must contain 'input_ids'/'input' and 'labels'/'target' keys")
+
+                    # Move to device
+                    inputs = inputs.to(self.device)
+                    targets = targets.to(self.device)
+
+                    # Check if we need attention mask
+                    attention_mask = batch.get("attention_mask", None)
+                    if attention_mask is not None:
+                        attention_mask = attention_mask.to(self.device)
+                        outputs = self.model(inputs, mask=attention_mask)
+                    else:
+                        outputs = self.model(inputs)
+
+                elif isinstance(batch, (tuple, list)) and len(batch) == 2:
+                    # Handle tuple format (inputs, targets)
+                    inputs, targets = batch
+
+                    # Move to device
+                    inputs = inputs.to(self.device)
+                    targets = targets.to(self.device)
+
+                    # Forward pass
+                    outputs = self.model(inputs)
+
+                else:
+                    raise ValueError(
+                        f"Unsupported batch format: {type(batch)}")
+
+                # Calculate loss
+                loss = criterion(outputs, targets)
 
                 # Store results
                 self.predictions.append(outputs.cpu())
-                self.targets.append(batch["target"].cpu())
+                self.targets.append(targets.cpu())
                 self.losses.append(loss.item())
 
         # Concatenate all predictions and targets
@@ -96,7 +129,7 @@ class Evaluator:
     def _get_loss_function(self):
         """Get loss function based on configuration."""
         loss_name = self.config.get("loss", "cross_entropy").lower()
-        
+
         if loss_name == "cross_entropy":
             return nn.CrossEntropyLoss()
         elif loss_name == "mse":
@@ -135,10 +168,13 @@ class Evaluator:
         if self.predictions.dim() == 2 and self.predictions.size(1) > 2:
             num_classes = self.predictions.size(1)
             for i in range(num_classes):
-                precision_per_class = precision_score(true_labels, pred_labels, labels=[i], average=None, zero_division=0)
-                recall_per_class = recall_score(true_labels, pred_labels, labels=[i], average=None, zero_division=0)
-                f1_per_class = f1_score(true_labels, pred_labels, labels=[i], average=None, zero_division=0)
-                
+                precision_per_class = precision_score(true_labels, pred_labels, labels=[
+                                                      i], average=None, zero_division=0)
+                recall_per_class = recall_score(true_labels, pred_labels, labels=[
+                                                i], average=None, zero_division=0)
+                f1_per_class = f1_score(true_labels, pred_labels, labels=[
+                                        i], average=None, zero_division=0)
+
                 if len(precision_per_class) > 0:
                     metrics[f"precision_class_{i}"] = precision_per_class[0]
                 if len(recall_per_class) > 0:
@@ -171,7 +207,8 @@ class Evaluator:
     def plot_confusion_matrix(self, save_path: Optional[str] = None):
         """Plot confusion matrix for classification tasks."""
         if self.task_type != "classification":
-            raise ValueError("Confusion matrix is only available for classification tasks")
+            raise ValueError(
+                "Confusion matrix is only available for classification tasks")
 
         from sklearn.metrics import confusion_matrix
 
@@ -200,14 +237,15 @@ class Evaluator:
     def plot_predictions_vs_targets(self, save_path: Optional[str] = None):
         """Plot predictions vs targets for regression tasks."""
         if self.task_type != "regression":
-            raise ValueError("Predictions vs targets plot is only available for regression tasks")
+            raise ValueError(
+                "Predictions vs targets plot is only available for regression tasks")
 
         pred_values = self.predictions.numpy()
         true_values = self.targets.numpy()
 
         plt.figure(figsize=(8, 6))
         plt.scatter(true_values, pred_values, alpha=0.6)
-        plt.plot([true_values.min(), true_values.max()], 
+        plt.plot([true_values.min(), true_values.max()],
                  [true_values.min(), true_values.max()], 'r--', lw=2)
         plt.xlabel('True Values')
         plt.ylabel('Predicted Values')
@@ -235,13 +273,13 @@ class Evaluator:
             "losses": self.losses,
             "config": self.config
         }
-        
+
         np.savez(save_path, **results)
 
     def load_results(self, load_path: str):
         """Load evaluation results from file."""
         data = np.load(load_path, allow_pickle=True)
-        
+
         self.predictions = torch.from_numpy(data["predictions"])
         self.targets = torch.from_numpy(data["targets"])
         self.losses = data["losses"].tolist()
@@ -297,8 +335,9 @@ class MetricTracker:
 
     def plot_metrics(self, metrics: List[str], save_path: Optional[str] = None):
         """Plot metric history."""
-        fig, axes = plt.subplots(len(metrics), 1, figsize=(10, 4 * len(metrics)))
-        
+        fig, axes = plt.subplots(
+            len(metrics), 1, figsize=(10, 4 * len(metrics)))
+
         if len(metrics) == 1:
             axes = [axes]
 

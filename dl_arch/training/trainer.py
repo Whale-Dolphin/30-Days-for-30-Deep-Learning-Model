@@ -10,11 +10,11 @@ from typing import Any, Dict, Optional, Callable
 import os
 import time
 from tqdm import tqdm
-import logging
+from loguru import logger
 
 from ..data import DataLoader
 from ..models import BaseModel
-from ..utils import setup_logging, save_checkpoint, load_checkpoint
+from ..utils import setup_logging, save_checkpoint, load_checkpoint, get_device
 
 
 class Trainer:
@@ -45,19 +45,18 @@ class Trainer:
         self.config = config or {}
 
         # Training parameters
-        self.num_epochs = self.config.get("num_epochs", 100)
-        self.learning_rate = self.config.get("learning_rate", 1e-3)
-        self.weight_decay = self.config.get("weight_decay", 1e-4)
+        self.num_epochs = int(self.config.get("num_epochs", 100))
+        self.learning_rate = float(self.config.get("learning_rate", 1e-3))
+        self.weight_decay = float(self.config.get("weight_decay", 1e-4))
         self.gradient_clip = self.config.get("gradient_clip", None)
-        self.save_interval = self.config.get("save_interval", 10)
-        self.eval_interval = self.config.get("eval_interval", 1)
-        self.log_interval = self.config.get("log_interval", 10)
+        if self.gradient_clip is not None:
+            self.gradient_clip = float(self.gradient_clip)
+        self.save_interval = int(self.config.get("save_interval", 10))
+        self.eval_interval = int(self.config.get("eval_interval", 1))
+        self.log_interval = int(self.config.get("log_interval", 10))
 
         # Device configuration
-        self.device = torch.device(
-            self.config.get(
-                "device", "cuda" if torch.cuda.is_available() else "cpu")
-        )
+        self.device = get_device(self.config.get("device", "auto"))
         self.model.to(self.device)
 
         # Optimizer and scheduler
@@ -78,10 +77,9 @@ class Trainer:
             )
 
         # Set up logging
-        self.logger = setup_logging(
-            name="trainer",
-            log_file=os.path.join(self.output_dir, "training.log")
-        )
+        logger.add(os.path.join(self.output_dir,
+                   "training.log"), rotation="10 MB")
+        logger.info("Trainer initialized with device: {}", self.device)
 
         # Training state
         self.current_epoch = 0
@@ -102,7 +100,7 @@ class Trainer:
             self.optimizer = optim.SGD(
                 self.model.parameters(),
                 lr=self.learning_rate,
-                momentum=self.config.get("momentum", 0.9),
+                momentum=float(self.config.get("momentum", 0.9)),
                 weight_decay=self.weight_decay
             )
         elif optimizer_name == "adamw":
@@ -123,8 +121,8 @@ class Trainer:
         elif scheduler_name == "step":
             self.scheduler = optim.lr_scheduler.StepLR(
                 self.optimizer,
-                step_size=self.config.get("step_size", 30),
-                gamma=self.config.get("gamma", 0.1)
+                step_size=int(self.config.get("step_size", 30)),
+                gamma=float(self.config.get("gamma", 0.1))
             )
         elif scheduler_name == "cosine":
             self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
@@ -135,8 +133,8 @@ class Trainer:
             self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
                 self.optimizer,
                 mode="min",
-                factor=self.config.get("factor", 0.5),
-                patience=self.config.get("patience", 10)
+                factor=float(self.config.get("factor", 0.5)),
+                patience=int(self.config.get("patience", 10))
             )
         else:
             raise ValueError(f"Unsupported scheduler: {scheduler_name}")
@@ -160,15 +158,30 @@ class Trainer:
 
     def _process_batch(self, batch, training=True):
         """
-        Process a batch of data, handling different formats.
+        Input: batch - Dictionary with keys (input_ids, labels, attention_mask) for transformers
+                      or Tuple (inputs, targets) for CNN/MLP models
+               training (bool) - Whether model is in training mode
+        Output: inputs (batch_size, ...) - Input tensor moved to device
+                targets (batch_size, ...) - Target tensor moved to device  
+                loss (scalar) - Computed loss value for the batch
 
-        Args:
-            batch: Batch data (can be tuple, dict, or tensor)
-            training: Whether in training mode
+        Purpose: Process different batch formats (dict/tuple), move tensors to device,
+                perform forward pass, compute loss, and optionally perform backward pass
+                with gradient clipping during training.
 
-        Returns:
-            tuple: (inputs, targets, loss)
+        Mathematical operations:
+            Forward: outputs = model(inputs) or model(inputs, mask)
+            Loss: loss = criterion(outputs, targets)
+            Backward (if training): ∇loss w.r.t. parameters, gradient clipping, optimizer step
+
+        Tensor flow:
+            batch -> inputs: (B, ...), targets: (B, ...) -> device
+            -> forward -> outputs: (B, C) -> loss: scalar
+            -> backward (if training) -> parameter updates
+        Where B=batch_size, C=num_classes or output_dim
         """
+        logger.debug("Processing batch, training mode: {}", training)
+
         if isinstance(batch, dict):
             # Handle dictionary format (e.g., transformer data)
             inputs = batch.get("input_ids", batch.get("input", None))
@@ -181,11 +194,14 @@ class Trainer:
             # Move to device
             inputs = inputs.to(self.device)
             targets = targets.to(self.device)
+            logger.debug(
+                "Dictionary batch - inputs shape: {}, targets shape: {}", inputs.shape, targets.shape)
 
             # Check if we need attention mask
             attention_mask = batch.get("attention_mask", None)
             if attention_mask is not None:
                 attention_mask = attention_mask.to(self.device)
+                logger.debug("Attention mask shape: {}", attention_mask.shape)
 
             # Forward pass
             if training:
@@ -213,6 +229,8 @@ class Trainer:
             # Move to device
             inputs = inputs.to(self.device)
             targets = targets.to(self.device)
+            logger.debug(
+                "Tuple batch - inputs shape: {}, targets shape: {}", inputs.shape, targets.shape)
 
             # Forward pass
             if training:
@@ -269,6 +287,22 @@ class Trainer:
                     self.writer.add_scalar(
                         'Train/LR', current_lr, self.global_step)
 
+                    # Log gradient norms for debugging
+                    total_norm = 0
+                    for p in self.model.parameters():
+                        if p.grad is not None:
+                            param_norm = p.grad.detach().data.norm(2)
+                            total_norm += param_norm.item() ** 2
+                    total_norm = total_norm ** (1. / 2)
+                    self.writer.add_scalar(
+                        'Train/GradNorm', total_norm, self.global_step)
+
+                    # Log parameter histograms occasionally
+                    if batch_idx % (self.log_interval * 10) == 0:
+                        for name, param in self.model.named_parameters():
+                            self.writer.add_histogram(
+                                f'Parameters/{name}', param, self.global_step)
+
         avg_loss = total_loss / num_batches
         return {"loss": avg_loss}
 
@@ -295,13 +329,12 @@ class Trainer:
 
     def train(self) -> None:
         """Main training loop."""
-        self.logger.info("Starting training...")
-        self.logger.info(f"Device: {self.device}")
-        self.logger.info(f"Model: {self.model.__class__.__name__}")
-        self.logger.info(f"Training samples: {len(self.train_loader.dataset)}")
+        logger.info("Starting training...")
+        logger.info("Device: {}", self.device)
+        logger.info("Model: {}", self.model.__class__.__name__)
+        logger.info("Training samples: {}", len(self.train_loader.dataset))
         if self.val_loader:
-            self.logger.info(
-                f"Validation samples: {len(self.val_loader.dataset)}")
+            logger.info("Validation samples: {}", len(self.val_loader.dataset))
 
         start_time = time.time()
 
@@ -330,7 +363,7 @@ class Trainer:
             if val_metrics:
                 log_msg += f" - Val Loss: {val_metrics['loss']:.4f}"
 
-            self.logger.info(log_msg)
+            logger.info(log_msg)
 
             # TensorBoard logging
             if self.use_tensorboard:
@@ -350,7 +383,7 @@ class Trainer:
                 self.save_checkpoint(epoch + 1, is_best=True)
 
         training_time = time.time() - start_time
-        self.logger.info(f"Training completed in {training_time:.2f} seconds")
+        logger.info("Training completed in {:.2f} seconds", training_time)
 
         if self.use_tensorboard:
             self.writer.close()
@@ -377,7 +410,7 @@ class Trainer:
         if is_best:
             best_path = os.path.join(self.output_dir, "best_model.pth")
             save_checkpoint(checkpoint, best_path)
-            self.logger.info(f"Saved best model at epoch {epoch}")
+            logger.info("Saved best model at epoch {}", epoch)
 
     def load_checkpoint(self, checkpoint_path: str) -> None:
         """Load model checkpoint."""
@@ -392,7 +425,7 @@ class Trainer:
         self.current_epoch = checkpoint['epoch']
         self.best_metric = checkpoint.get('best_metric', float('inf'))
 
-        self.logger.info(f"Loaded checkpoint from epoch {self.current_epoch}")
+        logger.info("Loaded checkpoint from epoch {}", self.current_epoch)
 
     def resume_training(self, checkpoint_path: str) -> None:
         """Resume training from checkpoint."""
@@ -404,4 +437,4 @@ class Trainer:
             self.num_epochs = remaining_epochs
             self.train()
         else:
-            self.logger.info("Training already completed")
+            logger.info("Training already completed")

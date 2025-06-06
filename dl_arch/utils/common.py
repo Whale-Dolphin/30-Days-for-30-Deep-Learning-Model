@@ -50,8 +50,9 @@ def get_model_size(model: torch.nn.Module) -> Dict[str, int]:
         Dictionary with model size information
     """
     total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    
+    trainable_params = sum(p.numel()
+                           for p in model.parameters() if p.requires_grad)
+
     return {
         "total_parameters": total_params,
         "trainable_parameters": trainable_params,
@@ -71,17 +72,23 @@ def create_dir(path: str) -> None:
 
 def get_device(device: Optional[str] = None) -> torch.device:
     """
-    Get PyTorch device.
+    Get PyTorch device with prioritized detection: CUDA > MPS > CPU.
 
     Args:
-        device: Device string ("cpu", "cuda", "cuda:0", etc.)
+        device: Device string ("cpu", "cuda", "cuda:0", "mps", "auto", etc.)
 
     Returns:
         PyTorch device
     """
-    if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    
+    if device is None or device == "auto":
+        # Priority: CUDA > MPS > CPU
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+
     return torch.device(device)
 
 
@@ -201,19 +208,20 @@ def get_memory_usage() -> Dict[str, float]:
         Dictionary with memory usage information
     """
     import psutil
-    
+
     process = psutil.Process(os.getpid())
     memory_info = process.memory_info()
-    
+
     usage = {
         "rss": memory_info.rss / 1024 / 1024,  # MB
         "vms": memory_info.vms / 1024 / 1024,  # MB
     }
-    
+
     if torch.cuda.is_available():
-        usage["gpu_allocated"] = torch.cuda.memory_allocated() / 1024 / 1024  # MB
+        usage["gpu_allocated"] = torch.cuda.memory_allocated() / 1024 / \
+            1024  # MB
         usage["gpu_cached"] = torch.cuda.memory_reserved() / 1024 / 1024  # MB
-    
+
     return usage
 
 

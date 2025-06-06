@@ -15,7 +15,7 @@ class DummyImageDataset(BaseDataset):
     """Dummy image dataset for testing CNN models."""
 
     def __init__(self, config: Dict[str, Any]):
-        super().__init__()
+        super().__init__(config)
         self.config = config
 
         # Extract parameters from config
@@ -33,6 +33,12 @@ class DummyImageDataset(BaseDataset):
     def __getitem__(self, idx):
         return self.images[idx], self.labels[idx]
 
+    def preprocess(self, data):
+        """Preprocess image data to tensor format."""
+        if isinstance(data, torch.Tensor):
+            return data
+        return torch.tensor(data, dtype=torch.float32)
+
     def get_sample_shape(self):
         return self.image_size
 
@@ -45,7 +51,7 @@ class DummyTextDataset(BaseDataset):
     """Dummy text dataset for testing Transformer models."""
 
     def __init__(self, config: Dict[str, Any]):
-        super().__init__()
+        super().__init__(config)
         self.config = config
 
         # Extract parameters from config
@@ -78,6 +84,21 @@ class DummyTextDataset(BaseDataset):
             "labels": self.labels[idx]
         }
 
+    def preprocess(self, data):
+        """Preprocess text data to tensor format."""
+        if isinstance(data, dict):
+            # Handle dictionary format
+            processed = {}
+            for key, value in data.items():
+                if isinstance(value, torch.Tensor):
+                    processed[key] = value
+                else:
+                    processed[key] = torch.tensor(value)
+            return processed
+        elif isinstance(data, torch.Tensor):
+            return data
+        return torch.tensor(data, dtype=torch.long)
+
     def get_vocab_size(self):
         return self.vocab_size
 
@@ -90,7 +111,7 @@ class DummyTabularDataset(BaseDataset):
     """Dummy tabular dataset for testing MLP models."""
 
     def __init__(self, config: Dict[str, Any]):
-        super().__init__()
+        super().__init__(config)
         self.config = config
 
         # Extract parameters from config
@@ -108,6 +129,12 @@ class DummyTabularDataset(BaseDataset):
     def __getitem__(self, idx):
         return self.features[idx], self.labels[idx]
 
+    def preprocess(self, data):
+        """Preprocess tabular data to tensor format."""
+        if isinstance(data, torch.Tensor):
+            return data
+        return torch.tensor(data, dtype=torch.float32)
+
     def get_num_features(self):
         return self.num_features
 
@@ -120,7 +147,7 @@ class StreamingTextDataset(IterableDataset, BaseDataset):
     """Streaming text dataset for large-scale data."""
 
     def __init__(self, config: Dict[str, Any]):
-        super().__init__()
+        super().__init__(config)
         self.config = config
 
         # Extract parameters from config
@@ -147,6 +174,20 @@ class StreamingTextDataset(IterableDataset, BaseDataset):
                 "labels": label
             }
 
+    def preprocess(self, data):
+        """Preprocess streaming text data to tensor format."""
+        if isinstance(data, dict):
+            processed = {}
+            for key, value in data.items():
+                if isinstance(value, torch.Tensor):
+                    processed[key] = value
+                else:
+                    processed[key] = torch.tensor(value)
+            return processed
+        elif isinstance(data, torch.Tensor):
+            return data
+        return torch.tensor(data, dtype=torch.long)
+
     def get_vocab_size(self):
         return self.vocab_size
 
@@ -159,7 +200,7 @@ class StreamingImageDataset(IterableDataset, BaseDataset):
     """Streaming image dataset for large-scale data."""
 
     def __init__(self, config: Dict[str, Any]):
-        super().__init__()
+        super().__init__(config)
         self.config = config
 
         # Extract parameters from config
@@ -173,6 +214,12 @@ class StreamingImageDataset(IterableDataset, BaseDataset):
             image = torch.randn(*self.image_size)
             label = torch.randint(0, self.num_classes, (1,)).item()
             yield image, label
+
+    def preprocess(self, data):
+        """Preprocess streaming image data to tensor format."""
+        if isinstance(data, torch.Tensor):
+            return data
+        return torch.tensor(data, dtype=torch.float32)
 
     def get_sample_shape(self):
         return self.image_size

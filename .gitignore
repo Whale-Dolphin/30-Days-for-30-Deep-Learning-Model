@@ -8,3 +8,15 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Experiment files
+outputs/
+exp/
+temp/
+*.log
+
+# Cursor Related
+.cursor/
+.cursorrules
+.cursor/mcp.json
+.cursorignore

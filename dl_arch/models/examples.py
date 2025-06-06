@@ -4,6 +4,8 @@ Example models demonstrating the registry system.
 
 import torch
 import torch.nn as nn
+from typing import Dict, Any, Optional
+from loguru import logger
 from dl_arch.models import BaseModel
 from dl_arch.models.transformer import TransformerEncoderLayer
 from dl_arch import register_model
@@ -13,7 +15,7 @@ from dl_arch import register_model
 class SimpleCNN(BaseModel):
     """Simple CNN model for image classification."""
 
-    def __init__(self, config):
+    def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self.config = config
 
@@ -43,8 +45,34 @@ class SimpleCNN(BaseModel):
         )
 
     def forward(self, x):
+        """
+        Input: x (batch_size, in_channels, height, width) - Input image tensor with batch dimension,
+               channels (e.g., RGB=3), and spatial dimensions (height, width)
+        Output: x (batch_size, num_classes) - Class logits for each sample in the batch
+
+        Purpose: Forward pass through CNN for image classification. Applies convolutional feature
+                extraction followed by classification layers to produce class predictions.
+
+        Mathematical formula:
+            features = Conv2D_layers(x)  # Apply convolution, pooling, activation layers
+            output = Linear_classifier(GlobalAvgPool(features))  # Classification head
+
+        Tensor flow:
+            x: (B, C, H, W) -> features: (B, C', H', W') -> pooled: (B, C') -> logits: (B, num_classes)
+        Where B=batch_size, C=input_channels, H=height, W=width, C'=feature_channels
+        """
+
+        # Shape validation
+        assert x.dim(
+        ) == 4, f"Expected 4D input tensor, got {x.dim()}D tensor with shape {x.shape}"
+        logger.debug("CNN forward - input shape: {}", x.shape)
+
         x = self.features(x)
+        logger.debug("CNN forward - after features shape: {}", x.shape)
+
         x = self.classifier(x)
+        logger.debug("CNN forward - output shape: {}", x.shape)
+
         return x
 
     def get_model_info(self):
@@ -85,10 +113,43 @@ class SimpleMLP(BaseModel):
         self.model = nn.Sequential(*layers)
 
     def forward(self, x):
+        """
+        Input: x (batch_size, input_features) or (batch_size, ...) - Input tensor that will be flattened
+               if more than 2D. For tabular data: (batch_size, num_features)
+        Output: x (batch_size, output_size) - Output logits or regression values
+
+        Purpose: Forward pass through Multi-Layer Perceptron for classification or regression.
+                Applies series of linear transformations with non-linear activations and dropout.
+
+        Mathematical formula:
+            h₀ = x (flattened if needed)
+            h₁ = ReLU(Linear₁(h₀))
+            h₂ = Dropout(ReLU(Linear₂(h₁)))
+            ...
+            output = Linearₙ(hₙ₋₁)
+
+        Tensor flow:
+            x: (B, *) -> flattened: (B, D) -> h₁: (B, H₁) -> ... -> output: (B, output_size)
+        Where B=batch_size, D=flattened_features, Hᵢ=hidden_layer_sizes
+        """
+
+        logger.debug("MLP forward - input shape: {}", x.shape)
+
         # Flatten input if needed
         if x.dim() > 2:
+            original_shape = x.shape
             x = x.view(x.size(0), -1)
-        return self.model(x)
+            logger.debug("MLP forward - flattened from {} to {}",
+                         original_shape, x.shape)
+
+        # Shape validation
+        assert x.dim(
+        ) == 2, f"Expected 2D input tensor after flattening, got {x.dim()}D tensor with shape {x.shape}"
+
+        x = self.model(x)
+        logger.debug("MLP forward - output shape: {}", x.shape)
+
+        return x
 
     def get_model_info(self):
         return {
@@ -134,7 +195,28 @@ class SimpleTransformer(BaseModel):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, mask=None):
-        # x: (batch_size, seq_len)
+        """
+        Input: x (batch_size, seq_len) - Input token IDs representing sequences of tokens
+               mask (batch_size, seq_len) - Optional attention mask, 1 for valid tokens, 0 for padding
+        Output: x (batch_size, num_classes) - Classification logits for each sequence
+
+        Purpose: Forward pass through Transformer encoder for sequence classification.
+                Applies token embedding, positional encoding, multi-head attention layers,
+                and pooling for sequence-level predictions.
+
+        Mathematical formula:
+            embeddings = embedding(x) * √d_model + PE[:seq_len]
+            h₀ = Dropout(embeddings)
+            For each layer i: hᵢ = TransformerLayer(hᵢ₋₁, mask)
+            normalized = LayerNorm(hₙ)
+            pooled = MaskedMeanPool(normalized, mask) if mask else MeanPool(normalized)
+            output = Linear(pooled)
+
+        Tensor flow:
+            x: (B, L) -> embeddings: (B, L, D) -> transformer_out: (B, L, D) -> pooled: (B, D) -> logits: (B, C)
+        Where B=batch_size, L=seq_len, D=d_model, C=num_classes
+        """
+
         seq_len = x.size(1)
 
         # Embedding + positional encoding

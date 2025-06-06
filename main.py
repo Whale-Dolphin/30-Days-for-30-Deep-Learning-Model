@@ -6,9 +6,9 @@ This script provides a unified interface for training and evaluating
 different deep learning models using the modular framework.
 
 Usage:
-    python main.py --config configs/cnn_config.yaml --mode train
-    python main.py --config configs/transformer_config.yaml --mode eval
-    python main.py --config configs/mlp_config.yaml --mode train --resume checkpoint.pt
+    python main.py --config configs/config.yaml --mode train
+    python main.py --config configs/config.yaml --mode train --resume checkpoint.pt
+    python main.py --config configs/config.yaml --mode eval
 """
 
 import dl_arch.data.examples
@@ -24,6 +24,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from loguru import logger
 
 # Add the current directory to Python path
 sys.path.append(str(Path(__file__).parent))
@@ -121,17 +122,14 @@ def main():
     set_seed(seed)
 
     # Set up logging
-    output_dir = experiment_config.get("output_dir", "./outputs")
+    output_dir = experiment_config.get("output_dir", "./exp")
     os.makedirs(output_dir, exist_ok=True)
 
-    logger = setup_logging(
-        name="main",
-        log_file=os.path.join(output_dir, "experiment.log")
-    )
+    logger.add(os.path.join(output_dir, "experiment.log"), rotation="10 MB")
 
-    logger.info(f"Starting experiment with config: {args.config}")
-    logger.info(f"Mode: {args.mode}")
-    logger.info(f"Output directory: {output_dir}")
+    logger.info("Starting experiment with config: {}", args.config)
+    logger.info("Mode: {}", args.mode)
+    logger.info("Output directory: {}", output_dir)
 
     print("=" * 60)
     print("DL-Arch Framework")
@@ -175,21 +173,21 @@ def main():
                 dataset_name, data_config["validation"])
 
         # Create data loaders
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=training_config.get("batch_size", 32),
-            shuffle=training_config.get("shuffle", True),
-            num_workers=training_config.get("num_workers", 0)
-        )
+        train_loader_config = {
+            "batch_size": training_config.get("batch_size", 32),
+            "shuffle": training_config.get("shuffle", True),
+            "num_workers": training_config.get("num_workers", 0)
+        }
+        train_loader = DataLoader(train_dataset, train_loader_config)
 
         val_loader = None
         if val_dataset:
-            val_loader = DataLoader(
-                val_dataset,
-                batch_size=training_config.get("batch_size", 32),
-                shuffle=False,
-                num_workers=training_config.get("num_workers", 0)
-            )
+            val_loader_config = {
+                "batch_size": training_config.get("batch_size", 32),
+                "shuffle": False,
+                "num_workers": training_config.get("num_workers", 0)
+            }
+            val_loader = DataLoader(val_dataset, val_loader_config)
 
         # Update training config with experiment settings
         training_config.update(experiment_config)
@@ -233,8 +231,11 @@ def main():
                 print(f"  {metric}: {value:.4f}")
 
     except Exception as e:
+        import traceback
         logger.error(f"Error during execution: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         print(f"Error: {e}")
+        print(f"Traceback: {traceback.format_exc()}")
         print(f"\nAvailable models: {list_models()}")
         print(f"Available datasets: {list_datasets()}")
         sys.exit(1)
