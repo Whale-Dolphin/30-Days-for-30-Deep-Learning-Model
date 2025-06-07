@@ -16,8 +16,9 @@ temp/
 *.log
 data/
 
-# Cursor Related
+# IDE Related
 .cursor/
 .cursorrules
 .cursor/mcp.json
 .cursorignore
+.vscode/
