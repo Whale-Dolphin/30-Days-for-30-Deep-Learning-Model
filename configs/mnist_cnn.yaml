@@ -1,23 +1,22 @@
 # Example CNN configuration
 model:
   name: "simple_cnn"
-  in_channels: 3
+  in_channels: 1
   num_classes: 10
   hidden_channels: [32, 64, 128]
 
 data:
-  name: "dummy_image"
-  num_samples: 1000
-  image_size: [3, 32, 32]
-  num_classes: 10
+  name: "mnist"
+  data_path: "./data"
+  download: true
+  normalize: true
+  preprocessor:
+    name: "mnist"
+    normalize: true
   train:
-    num_samples: 800
-    image_size: [3, 32, 32]
-    num_classes: 10
+    split: "train"
   validation:
-    num_samples: 200
-    image_size: [3, 32, 32]
-    num_classes: 10
+    split: "test"
 
 training:
   num_epochs: 10
@@ -37,5 +36,5 @@ training:
 
 experiment:
   seed: 42
-  output_dir: "./outputs/cnn_experiment"
+  output_dir: "./exp/mnist_cnn_exp"
   device: "auto"
