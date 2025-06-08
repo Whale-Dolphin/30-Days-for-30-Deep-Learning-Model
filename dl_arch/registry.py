@@ -2,10 +2,11 @@
 Registry system for models and datasets with decorators.
 """
 
-from typing import Dict, Type, Any, Union
+from typing import Dict, Type, Any, Union, TYPE_CHECKING
 
-from .models import BaseModel
-from .data import BaseDataset
+if TYPE_CHECKING:
+    from .models import BaseModel
+    from .data import BaseDataset
 
 
 class Registry:
@@ -66,6 +67,9 @@ class DatasetRegistry(Registry):
             dataset_type: Type of dataset ("map" or "iterable")
         """
         def decorator(cls):
+            # Import BaseDataset here to avoid circular import
+            from .data import BaseDataset
+
             # Validate that it's a BaseDataset subclass
             if not issubclass(cls, BaseDataset):
                 raise ValueError(
@@ -123,6 +127,9 @@ class ModelRegistry(Registry):
     def register(self, name: str = None):
         """Decorator for registering models."""
         def decorator(cls):
+            # Import BaseModel here to avoid circular import
+            from .models import BaseModel
+
             # Validate that it's a BaseModel subclass
             if not issubclass(cls, BaseModel):
                 raise ValueError(
@@ -165,6 +172,8 @@ DATASETS = DatasetRegistry()
 PREPROCESSES = PreprocessRegistry()  # New global registry for preprocessing
 
 # Convenience decorators
+
+
 def register_model(name: str = None):
     """Decorator to register a model."""
     return MODELS.register(name)
@@ -181,12 +190,12 @@ def register_preprocess(name: str = None):
 
 
 # Factory functions
-def create_model(name: str, config: Dict[str, Any]) -> BaseModel:
+def create_model(name: str, config: Dict[str, Any]):
     """Create a model instance from registry."""
     return MODELS.create(name, config)
 
 
-def create_dataset(name: str, config: Dict[str, Any]) -> BaseDataset:
+def create_dataset(name: str, config: Dict[str, Any]):
     """Create a dataset instance from registry."""
     return DATASETS.create(name, config)
 

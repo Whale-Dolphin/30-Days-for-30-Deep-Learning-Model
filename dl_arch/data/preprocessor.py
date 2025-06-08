@@ -2,6 +2,7 @@
 Data preprocessing system with registry support.
 """
 
+from dl_arch.registry import PREPROCESSES
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Union, Tuple, Optional
 
@@ -10,7 +11,10 @@ import torchvision.transforms as transforms
 import numpy as np
 from loguru import logger
 
-from dl_arch.registry import register_preprocess
+from dl_arch.registry import register_preprocess, PREPROCESSES
+
+# Create alias for the decorator
+register_preprocessor = register_preprocess
 
 
 class BasePreprocessor(ABC):
@@ -421,3 +425,7 @@ class MNISTPreprocessor(BasePreprocessor):
         if self.flatten:
             return (784,)
         return self.image_size
+
+
+# Create global preprocessors registry alias
+PREPROCESSORS = PREPROCESSES  # Alias for consistency
