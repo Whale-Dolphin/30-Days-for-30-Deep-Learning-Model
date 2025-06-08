@@ -10,7 +10,7 @@ from loguru import logger
 
 from dl_arch.models import BaseModel
 from dl_arch.models.transformer import TransformerEncoderLayer
-from dl_arch import register_model
+from dl_arch.registry import register_model
 
 
 @register_model("simple_cnn")
@@ -67,13 +67,13 @@ class SimpleCNN(BaseModel):
         # Shape validation
         assert x.dim(
         ) == 4, f"Expected 4D input tensor, got {x.dim()}D tensor with shape {x.shape}"
-        logger.debug("CNN forward - input shape: {}", x.shape)
+        # logger.debug("CNN forward - input shape: {}", x.shape)
 
         x = self.features(x)
-        logger.debug("CNN forward - after features shape: {}", x.shape)
+        # logger.debug("CNN forward - after features shape: {}", x.shape)
 
         x = self.classifier(x)
-        logger.debug("CNN forward - output shape: {}", x.shape)
+        # logger.debug("CNN forward - output shape: {}", x.shape)
 
         return x
 

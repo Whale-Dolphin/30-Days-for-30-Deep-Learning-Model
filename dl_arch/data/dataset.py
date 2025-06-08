@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Tuple, Union, Optional
 
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, IterableDataset
 from loguru import logger
 
 from .preprocessor import PREPROCESSORS, BasePreprocessor
@@ -146,90 +146,130 @@ class BaseDataset(Dataset, ABC):
             }
 
 
-class ImageDataset(BaseDataset):
-    """Base class for image datasets."""
+class BaseIterableDataset(IterableDataset, ABC):
+    """
+    Abstract base class for all iterable datasets in the framework.
+
+    This class defines the interface that all iterable datasets must implement.
+    It provides common functionality for streaming data loading and preprocessing.
+    """
 
     def __init__(self, config: Dict[str, Any]):
-        # Set default preprocessor for images
-        if "preprocessor" not in config:
-            config["preprocessor"] = {"name": "image"}
-        super().__init__(config)
+        """
+        Initialize the iterable dataset with configuration.
 
-        self.num_classes = config.get("num_classes", None)
-        self.image_size = config.get("image_size", (3, 224, 224))
+        Args:
+            config: Dictionary containing dataset configuration
+        """
+        self.config = config
+        self.data_path = config.get("data_path", "")
+        self.split = config.get("split", "train")
 
-    def get_num_classes(self) -> Optional[int]:
-        """Get number of classes for classification tasks."""
-        return self.num_classes
+        # Setup preprocessor
+        preprocessor_config = config.get("preprocessor", {})
+        preprocessor_name = preprocessor_config.get("name", None)
 
-    def get_image_size(self) -> Tuple[int, ...]:
-        """Get expected image size."""
-        return self.image_size
+        if preprocessor_name:
+            logger.debug("Creating preprocessor: {}", preprocessor_name)
+            self.preprocessor = PREPROCESSORS.create(
+                preprocessor_name, preprocessor_config)
+        else:
+            logger.warning("No preprocessor specified in config")
+            self.preprocessor = None
 
+    @abstractmethod
+    def __iter__(self):
+        """
+        Return an iterator over the dataset.
 
-class TextDataset(BaseDataset):
-    """Base class for text datasets."""
+        Returns:
+            Iterator yielding (input, target) tuples or dictionaries with processed data
+        """
+        pass
 
-    def __init__(self, config: Dict[str, Any]):
-        # Set default preprocessor for text
-        if "preprocessor" not in config:
-            config["preprocessor"] = {"name": "text"}
-        super().__init__(config)
+    @abstractmethod
+    def _load_data_stream(self):
+        """
+        Load data as a stream without preprocessing.
 
-        self.vocab_size = config.get("vocab_size", None)
-        self.max_length = config.get("max_length", 512)
-        self.num_classes = config.get("num_classes", None)
+        Returns:
+            Generator yielding raw data samples
+        """
+        pass
 
-    def get_vocab_size(self) -> Optional[int]:
-        """Get vocabulary size."""
-        return self.vocab_size
+    def preprocess(self, data: Any) -> torch.Tensor:
+        """
+        Preprocess raw data using the registered preprocessor.
 
-    def get_max_length(self) -> int:
-        """Get maximum sequence length."""
-        return self.max_length
+        Args:
+            data: Raw data to preprocess
 
-    def get_num_classes(self) -> Optional[int]:
-        """Get number of classes for classification tasks."""
-        return self.num_classes
+        Returns:
+            Preprocessed tensor
+        """
+        if self.preprocessor is None:
+            logger.warning("No preprocessor available, returning data as-is")
+            if isinstance(data, torch.Tensor):
+                return data
+            return torch.tensor(data)
 
+        return self.preprocessor.preprocess(data)
 
-class TabularDataset(BaseDataset):
-    """Base class for tabular datasets."""
+    def get_data_info(self) -> Dict[str, Any]:
+        """
+        Get information about the dataset.
 
-    def __init__(self, config: Dict[str, Any]):
-        # Set default preprocessor for tabular data
-        if "preprocessor" not in config:
-            config["preprocessor"] = {"name": "tabular"}
-        super().__init__(config)
+        Returns:
+            Dictionary containing dataset information
+        """
+        info = {
+            "split": self.split,
+            "data_path": self.data_path,
+            "dataset_type": "iterable",
+        }
 
-        self.num_features = config.get("num_features", None)
-        self.num_classes = config.get("num_classes", None)
+        if self.preprocessor:
+            info["preprocessor"] = self.preprocessor.__class__.__name__
+            info["output_shape"] = self.preprocessor.get_output_shape()
 
-    def get_num_features(self) -> Optional[int]:
-        """Get number of input features."""
-        return self.num_features
+        return info
 
-    def get_num_classes(self) -> Optional[int]:
-        """Get number of classes for classification tasks."""
-        return self.num_classes
+    def get_sample_info(self, sample: Any = None) -> Dict[str, Any]:
+        """
+        Get information about a sample.
 
+        Args:
+            sample: Sample to analyze (if None, will get first sample from iterator)
 
-class AudioDataset(BaseDataset):
-    """Base class for audio datasets."""
+        Returns:
+            Dictionary with sample information
+        """
+        if sample is None:
+            # Get the first sample from the iterator
+            iterator = iter(self)
+            try:
+                sample = next(iterator)
+            except StopIteration:
+                return {"error": "Dataset is empty"}
 
-    def __init__(self, config: Dict[str, Any]):
-        # Set default preprocessor for audio
-        if "preprocessor" not in config:
-            config["preprocessor"] = {"name": "audio"}
-        super().__init__(config)
-
-        self.sample_rate = config.get("sample_rate", 16000)
-        self.num_classes = config.get("num_classes", None)
-
-    def get_sample_rate(self) -> int:
-        """Get audio sample rate."""
-        return self.sample_rate
-
-    def get_num_classes(self) -> Optional[int]:
-        """Get number of classes for classification tasks."""
-        return self.num_classes
+        if isinstance(sample, tuple):
+            input_data, target = sample
+            return {
+                "input_shape": input_data.shape if hasattr(input_data, 'shape') else None,
+                "input_dtype": input_data.dtype if hasattr(input_data, 'dtype') else type(input_data),
+                "target_shape": target.shape if hasattr(target, 'shape') else None,
+                "target_dtype": target.dtype if hasattr(target, 'dtype') else type(target),
+            }
+        elif isinstance(sample, dict):
+            info = {}
+            for key, value in sample.items():
+                info[f"{key}_shape"] = value.shape if hasattr(
+                    value, 'shape') else None
+                info[f"{key}_dtype"] = value.dtype if hasattr(
+                    value, 'dtype') else type(value)
+            return info
+        else:
+            return {
+                "sample_shape": sample.shape if hasattr(sample, 'shape') else None,
+                "sample_dtype": sample.dtype if hasattr(sample, 'dtype') else type(sample),
+            }

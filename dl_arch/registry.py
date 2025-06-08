@@ -67,13 +67,13 @@ class DatasetRegistry(Registry):
             dataset_type: Type of dataset ("map" or "iterable")
         """
         def decorator(cls):
-            # Import BaseDataset here to avoid circular import
-            from .data import BaseDataset
+            # Import both BaseDataset and BaseIterableDataset here to avoid circular import
+            from .data import BaseDataset, BaseIterableDataset
 
-            # Validate that it's a BaseDataset subclass
-            if not issubclass(cls, BaseDataset):
+            # Validate that it's a BaseDataset or BaseIterableDataset subclass
+            if not (issubclass(cls, BaseDataset) or issubclass(cls, BaseIterableDataset)):
                 raise ValueError(
-                    f"Class {cls.__name__} must inherit from BaseDataset")
+                    f"Class {cls.__name__} must inherit from BaseDataset or BaseIterableDataset")
 
             # Use class name if no name provided
             reg_name = name if name is not None else cls.__name__.lower()

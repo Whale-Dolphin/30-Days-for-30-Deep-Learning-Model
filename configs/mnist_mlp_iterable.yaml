@@ -1,0 +1,49 @@
+# MNIST IterableDataset with MLP model configuration
+model:
+  name: "simple_mlp"
+  input_size: 784  # 28*28 flattened MNIST images
+  hidden_sizes: [256, 128]
+  output_size: 10  # 10 digit classes
+  dropout: 0.2
+
+data:
+  name: "mnist_iterable"
+  data_path: "./data"
+  download: true
+  shuffle: true
+  buffer_size: 1000
+  preprocessor:
+    name: "mnist"
+    flatten: true 
+    normalize: true
+  train:
+    split: "train"
+  validation:
+    name: "mnist"
+    split: "test"
+
+dataloader:
+  batch_size: 64
+  num_workers: 0
+  pin_memory: true
+
+training:
+  num_epochs: 10
+  batch_size: 64
+  learning_rate: 0.001
+  weight_decay: 1e-4
+  optimizer: "adam"
+  scheduler: "plateau"
+  factor: 0.5
+  patience: 3
+  loss: "cross_entropy"
+  gradient_clip: 1.0
+  save_interval: 5
+  eval_interval: 1
+  log_interval: 100
+  use_tensorboard: true
+
+experiment:
+  seed: 42
+  output_dir: "./exp/mnist_mlp_iterable_experiment"
+  device: "auto" 

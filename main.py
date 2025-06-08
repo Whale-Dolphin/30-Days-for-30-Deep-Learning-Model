@@ -142,9 +142,7 @@ def main(config, mode, checkpoint, data_path, output_dir, seed, device, eval_int
 
     # Set up output directory and logging
     output_dir_path = experiment_config.get("output_dir", "./outputs")
-    config_name = Path(config).stem
-    experiment_name = f"{config_name}_experiment"
-    full_output_dir = Path(output_dir_path) / experiment_name
+    full_output_dir = Path(output_dir_path)
     full_output_dir.mkdir(parents=True, exist_ok=True)
 
     # Set up file logging with same level as console
@@ -196,8 +194,10 @@ def main(config, mode, checkpoint, data_path, output_dir, seed, device, eval_int
         # Create validation dataset if specified
         val_dataset = None
         if "validation" in data_config:
-            val_dataset = create_dataset(
-                dataset_name, data_config["validation"])
+            val_config = data_config["validation"]
+            # Check if validation config specifies a different dataset name
+            val_dataset_name = val_config.get("name", dataset_name)
+            val_dataset = create_dataset(val_dataset_name, val_config)
 
         # Create data loaders
         dataloader_config = config_dict.get("dataloader", {})
@@ -224,9 +224,31 @@ def main(config, mode, checkpoint, data_path, output_dir, seed, device, eval_int
         training_config["output_dir"] = str(full_output_dir)
 
         click.echo(f"Model: {model.__class__.__name__}")
-        click.echo(f"Training samples: {len(train_dataset)}")
+
+        # Handle dataset length for both regular and iterable datasets
+        try:
+            train_len = len(train_dataset)
+            click.echo(f"Training samples: {train_len}")
+        except TypeError:
+            # IterableDataset doesn't support len()
+            if hasattr(train_dataset, 'get_dataset_size'):
+                train_len = train_dataset.get_dataset_size()
+                click.echo(f"Training samples: {train_len}")
+            else:
+                click.echo("Training samples: Unknown (Iterable Dataset)")
+
         if val_dataset:
-            click.echo(f"Validation samples: {len(val_dataset)}")
+            try:
+                val_len = len(val_dataset)
+                click.echo(f"Validation samples: {val_len}")
+            except TypeError:
+                # IterableDataset doesn't support len()
+                if hasattr(val_dataset, 'get_dataset_size'):
+                    val_len = val_dataset.get_dataset_size()
+                    click.echo(f"Validation samples: {val_len}")
+                else:
+                    click.echo(
+                        "Validation samples: Unknown (Iterable Dataset)")
 
         # Set up TensorBoard
         tensorboard_dir = full_output_dir / "tensorboard"
